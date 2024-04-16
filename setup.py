@@ -10,7 +10,7 @@ setup(
     description="A demo for showing the relationship between power, current, voltage and power factor.",
     long_description=long_description,
     url='https://github.com/DanielDavisEE/PowerQuadrantDemo',
-    python_requires='>=3.9, <4',
+    python_requires='>=3.10, <4',
     package_dir={'': 'src'},
     packages=['power_quadrant_demo'],
     install_requires=[

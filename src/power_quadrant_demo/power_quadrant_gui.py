@@ -1,6 +1,7 @@
 import logging
 import tkinter as tk
 from tkinter import ttk
+import abc
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import (
@@ -8,6 +9,7 @@ from matplotlib.backends.backend_tkagg import (
 from matplotlib.figure import Figure
 
 logging.basicConfig(level=logging.INFO)
+
 
 class Limiter(ttk.Scale):
     """ ttk.Scale sublass that limits the precision of values.
@@ -25,6 +27,7 @@ class Limiter(ttk.Scale):
         self.winfo_toplevel().globalsetvar(self.cget('variable'), (newvalue))
         self.chain(newvalue)  # Call user specified function.
 
+
 class RoundedDoubleVar(tk.DoubleVar):
     """ ttk.Scale sublass that limits the precision of values.
     Source: https://stackoverflow.com/questions/54186639/tkinter-control-ttk-scales-increment-as-with-tk-scale-and-a-tk-doublevar
@@ -34,8 +37,7 @@ class RoundedDoubleVar(tk.DoubleVar):
         return round(super().get(), 2)
 
 
-
-class GUIBlock:
+class GUIBlock(abc.ABC):
     root = tk.Tk()
 
     style = ttk.Style(root)
@@ -44,16 +46,10 @@ class GUIBlock:
 
     phi = RoundedDoubleVar(root, name='GraphPhi', value=0.)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent):
         super().__init__()
 
-        if parent:
-            self.frame = ttk.Frame(parent.frame)
-            parent.children.append(self)
-        else:
-            self.frame = ttk.Frame(self.root)
-
-        self.children = []
+        self.frame = ttk.Frame(parent)
 
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.setLevel(logging.DEBUG)
@@ -63,83 +59,117 @@ class GUIBlock:
             pass_through_f = getattr(self.frame, item)
             return pass_through_f
 
-    def _refresh(self):
-        for child in self.children:
-            child._refresh()
 
-
-class GraphBlock(GUIBlock):
-    DIMENSIONS: tuple[int, int]
+class GraphBlock(GUIBlock, metaclass=abc.ABCMeta):
+    REFRESH_DELAY_MS = 20
 
     def __init__(self, parent):
         super().__init__(parent)
 
+        self.canvas = None
         self.transient_plot_objects = []
 
-        self.plot_constant_objects()
-        self.plot_transient_objects()
-        self.canvas.draw()
+        self.setup()
+        self._refresh()
 
     def _refresh(self):
-        super()._refresh()
-
         for _ in range(len(self.transient_plot_objects)):
             self.transient_plot_objects.pop().remove()
 
-        self.plot_transient_objects()
+        self.refresh()
 
         self.canvas.draw()
 
-    def plot_constant_objects(self):
-        fig = Figure(figsize=self.DIMENSIONS, dpi=100)
-        self.ax = fig.add_subplot(111)
+        self.root.after(self.REFRESH_DELAY_MS, self._refresh)
 
-        self.canvas = FigureCanvasTkAgg(fig, master=self.frame)  # A tk.DrawingArea.
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self.canvas.draw()
+    def create_canvas(self, fig: Figure) -> FigureCanvasTkAgg:
+        canvas = FigureCanvasTkAgg(fig, master=self.frame)  # A tk.DrawingArea.
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        return canvas
 
-    def plot_transient_objects(self):
-        raise NotImplementedError
+    @abc.abstractmethod
+    def setup(self):
+        pass
+
+    @abc.abstractmethod
+    def refresh(self):
+        pass
 
 
 class QuadrantViewer(GraphBlock):
     DIMENSIONS = 5, 5
 
-    def plot_constant_objects(self):
-        super().plot_constant_objects()
+    def __init__(self, parent):
+        self.ax = None
+
+        super().__init__(parent)
+
+    def setup(self):
+        fig = Figure(figsize=self.DIMENSIONS, dpi=100)
+        self.canvas = self.create_canvas(fig)
+
+        self.ax = fig.add_subplot(111)
 
         # Plot lines on graph
         phi_array = np.linspace(0, 2 * np.pi, 100)
-        self.ax.axvline(0, -1.1, 1.1, color='k')
-        self.ax.axhline(0, -1.1, 1.1, color='k')
+        self.ax.axvline(0, -1.1, 1.1, color='k', linewidth=1)
+        self.ax.axhline(0, -1.1, 1.1, color='k', linewidth=1)
         self.ax.plot(np.sin(phi_array), np.cos(phi_array), 'k')
 
-    def plot_transient_objects(self):
+        self.ax.annotate('+P', xy=(0.94, 0.51), xycoords='axes fraction')
+        self.ax.annotate('-P', xy=(0.01, 0.51), xycoords='axes fraction')
+        self.ax.annotate('+Q  (OverExcited)', xy=(0.43, 0.96), xycoords='axes fraction')
+        self.ax.annotate('-Q  (UnderExcited)', xy=(0.45, 0.02), xycoords='axes fraction')
+
+        self.ax.set_xlim(-1.2, 1.2)
+        self.ax.set_ylim(-1.2, 1.2)
+
+    def refresh(self):
         x, y = np.cos(self.phi.get()), np.sin(self.phi.get())
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
         self.transient_plot_objects.append(self.ax.plot([0, x], [0, y], '--', color='gray')[0])
 
 
 class WaveformViewer(GraphBlock):
-    DIMENSIONS = 5, 2
+    DIMENSIONS = 5, 5
+    MIN_TIME, MAX_TIME = -10, 30
 
     def __init__(self, *args, **kwargs):
+        self.time_array = np.linspace(self.MIN_TIME, self.MAX_TIME, 100)
+        self.phi_array = self.time_array / (self.MAX_TIME - self.MIN_TIME) * np.pi * 4
+
+        self.upper_ax = None
+        self.lower_ax = None
+
         super().__init__(*args, **kwargs)
 
-        min_time, max_time = -10, 30
-        self.time_array = np.linspace(min_time, max_time, 100)
-        self.phi_array = self.time_array / (max_time - min_time) * np.pi * 4
+    def setup(self):
+        fig = Figure(figsize=self.DIMENSIONS, dpi=100)
+        self.canvas = self.create_canvas(fig)
 
-    def plot_constant_objects(self):
-        super().plot_constant_objects()
+        self.upper_ax = fig.add_subplot(211)
+        self.lower_ax = fig.add_subplot(212)
 
-        self.ax.plot(self.time_array, np.sin(self.phi_array), 'r', label='Voltage')
-        self.transient_plot_objects.append(self.ax.plot(self.time_array, np.sin(self.phi_array), 'g', label='Current')[0])
+        self.upper_ax.plot(self.time_array, np.sin(self.phi_array), 'r', label='Voltage')
 
-        self.ax.legend(loc='upper right')
+        self.refresh()
 
-    def plot_transient_objects(self):
-        self.transient_plot_objects.append(self.ax.plot(self.time_array, np.sin(self.phi_array), 'g')[0])
+        self.upper_ax.legend(loc='upper right')
+        self.lower_ax.legend(loc='upper right')
+
+    def refresh(self):
+        current_plot = self.upper_ax.plot(self.time_array, np.sin(self.phi_array - self.phi.get()), 'g', label='Current')[0]
+        current_alpha_plot = self.upper_ax.plot(self.time_array, np.sin(self.phi_array - self.phi.get() - np.pi), 'g', label='Reverse Current', alpha=0.3)[0]
+        self.transient_plot_objects.append(current_plot)
+        self.transient_plot_objects.append(current_alpha_plot)
+
+        active_magnitude = np.cos(self.phi.get())
+        active_wave = self.lower_ax.plot(self.time_array, active_magnitude * np.sin(self.phi_array), 'b', label='Active Current')[0]
+
+        reactive_magnitude = np.sin(self.phi.get())
+        reactive_wave = self.lower_ax.plot(self.time_array, reactive_magnitude * np.sin(self.phi_array - np.pi / 2), color='orange', label='Reactive Current')[0]
+
+        self.transient_plot_objects.extend([active_wave, reactive_wave])
 
 
 class GraphOptionsPane(GUIBlock):
@@ -151,7 +181,7 @@ class GraphOptionsPane(GUIBlock):
             side=tk.TOP, fill=tk.BOTH, expand=False)
         phi_scale_frame.columnconfigure(2, weight=1)
 
-        ttk.Label(phi_scale_frame, text='Phi=').grid(
+        ttk.Label(phi_scale_frame, text='Phi =').grid(
             row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Entry(phi_scale_frame, textvariable=self.phi, width=8).grid(
             row=0, column=1, sticky=tk.W, padx=5, pady=5)
@@ -164,12 +194,12 @@ class GraphOptionsPane(GUIBlock):
         variables_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=False)
 
-        self.rms_voltage = RoundedDoubleVar(name='Vrms', value=230)
+        self.rms_voltage = RoundedDoubleVar(name='Vrms', value=1)
         self.cos_phi_pf = RoundedDoubleVar(name='cos(phi)')
         self.p_over_s_pf = RoundedDoubleVar(name='P/S')
         row_1 = [self.rms_voltage, self.cos_phi_pf, self.p_over_s_pf]
 
-        self.apparent_current = RoundedDoubleVar(name='Ia', value=200)
+        self.apparent_current = RoundedDoubleVar(name='Ia', value=1)
         self.active_current = RoundedDoubleVar(name='I')
         self.reactive_current = RoundedDoubleVar(name='Ir')
         row_2 = [self.apparent_current, self.active_current, self.reactive_current]
@@ -189,19 +219,14 @@ class GraphOptionsPane(GUIBlock):
                     row=i, column=2 * j + 1, sticky=tk.W, padx=5, pady=5)
 
     def _round_vars(self, *_):
-        self.phi.set(round(self.phi.get(), 2))
-
-        self.rms_voltage.set(round(self.rms_voltage.get(), 2))
-        self.cos_phi_pf.set(round(self.cos_phi_pf.get(), 2))
-        self.p_over_s_pf.set(round(self.p_over_s_pf.get(), 2))
-
-        self.apparent_current.set(round(self.apparent_current.get(), 2))
-        self.active_current.set(round(self.active_current.get(), 2))
-        self.reactive_current.set(round(self.reactive_current.get(), 2))
-
-        self.apparent_power.set(round(self.apparent_power.get(), 2))
-        self.active_power.set(round(self.active_power.get(), 2))
-        self.reactive_power.set(round(self.reactive_power.get(), 2))
+        for var_name in [
+            'phi',
+            'rms_voltage', 'cos_phi_pf', 'p_over_s_pf',
+            'apparent_current', 'active_current', 'reactive_current',
+            'apparent_power', 'active_power', 'reactive_power',
+        ]:
+            var = getattr(self, var_name)
+            var.set(round(var.get(), 2))
 
     def _calculate_variables(self, *_):
         self.cos_phi_pf.set(np.cos(self.phi.get()))
@@ -216,21 +241,20 @@ class GraphOptionsPane(GUIBlock):
         self.p_over_s_pf.set(self.active_power.get() / self.apparent_power.get())
 
 
-
 class PowerQuadrantsGUI(GUIBlock):
     def __init__(self):
-        super().__init__()
+        super().__init__(self.root)
 
         self.root.wm_title("Power Quadrants")
 
         self.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        QuadrantViewer(self).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-        WaveformViewer(self).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-        GraphOptionsPane(self).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
+        graph_block = ttk.Frame(self.frame)
+        graph_block.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.phi.trace_add('write', lambda *_: self._refresh())
-        self.phi.set(0.)
+        QuadrantViewer(graph_block).pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
+        WaveformViewer(graph_block).pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
+        GraphOptionsPane(self.frame).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
 
         self.root.resizable(False, False)
         self.root.eval('tk::PlaceWindow . center')
