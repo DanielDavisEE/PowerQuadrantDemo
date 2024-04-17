@@ -188,6 +188,7 @@ class WaveformViewer(GraphBlock):
         self.lower_ax = None
 
         self.time_array = np.linspace(self.MIN_TIME, self.MAX_TIME, 100)
+        self.voltage_wave = self.SQRT_TWO * np.sin(self.OMEGA * self.time_array)
 
         super().__init__(*args, **kwargs)
 
@@ -198,7 +199,7 @@ class WaveformViewer(GraphBlock):
         self.upper_ax = fig.add_subplot(211)
         self.lower_ax = fig.add_subplot(212)
 
-        self.upper_ax.plot(self.time_array, self.SQRT_TWO * self.voltage.get() * np.sin(self.OMEGA * self.time_array), 'r', label='Voltage', zorder=10)
+        self.upper_ax.plot(self.time_array, self.voltage_wave, 'r', label='Voltage', zorder=3)
 
         self.refresh()
 
