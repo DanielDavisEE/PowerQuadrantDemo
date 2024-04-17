@@ -24,7 +24,9 @@ class GUIBlock(abc.ABC):
     style.configure('SubHeader.TLabel', font=('Helvetica', 12))
     style.configure('Text.TLabel', font=('Helvetica', 12))
 
-    phi = tk.DoubleVar(root, name='GraphPhi', value=0.)
+    phi = tk.DoubleVar(root, name='Phi', value=0.)
+    voltage = tk.DoubleVar(root, name='VoltageRMS', value=1.)
+    current = tk.DoubleVar(root, name='CurrentRMS', value=1.)
 
     _gui_block_instances = set()
 
@@ -97,6 +99,9 @@ class QuadrantViewer(GraphBlock):
     def __init__(self, parent):
         self.ax = None
         self._button_held = False
+        self.phi_str = tk.StringVar(name='PhiStr', value=f"{self.phi.get():5.2f}")
+
+        self.phi.trace_add('write', lambda *_: self.phi_str.set(f"{self.phi.get():5.2f}"))
 
         super().__init__(parent)
 
@@ -139,25 +144,32 @@ class QuadrantViewer(GraphBlock):
     def _recalculate_phi(self, event):
         if event.inaxes:
             self.phi.set(np.arctan2(event.ydata, event.xdata))
+            apparent_power = min(1., (event.ydata ** 2 + event.xdata ** 2) ** 0.5)
+            self.current.set(apparent_power / self.voltage.get())
 
     def refresh(self):
-        # Plot angle arc
-        angle_deg = np.rad2deg(self.phi.get())
-        theta1, theta2 = 0, angle_deg
-        if angle_deg < 0:
-            theta1, theta2 = theta2, theta1
-        e2 = patches.Arc((0, 0), 0.2, 0.2,
-                         theta1=theta1, theta2=theta2, linewidth=1, color='gray', alpha=0.8)
-        self.transient_plot_objects.append(e2)
-        self.ax.add_patch(e2)
+        apparent_power = self.voltage.get() * self.current.get()
+
+        arc_radius = 0.2
+        if apparent_power > arc_radius:
+            # Plot angle arc
+            angle_deg = np.rad2deg(self.phi.get())
+            theta1, theta2 = 0, angle_deg
+            if angle_deg < 0:
+                theta1, theta2 = theta2, theta1
+            e2 = patches.Arc((0, 0), 0.2, 0.2,
+                             theta1=theta1, theta2=theta2, linewidth=1, color='gray', alpha=0.8)
+            self.transient_plot_objects.append(e2)
+            self.ax.add_patch(e2)
 
         # Convert phi to rectangular and plot the vector
-        x, y = np.cos(self.phi.get()), np.sin(self.phi.get())
+        x = apparent_power * np.cos(self.phi.get())
+        y = apparent_power * np.sin(self.phi.get())
         self.transient_plot_objects.append(self.ax.plot([0, x], [0, y], '--', color='gray')[0])
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
 
         # Label with the value of phi
-        self.transient_plot_objects.append(self.ax.annotate(f'φ = {self.phi.get()}', xy=(0.51, 0.51), xycoords='axes fraction'))
+        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.phi_str.get()}', fontfamily='monospace'))
 
 
 class WaveformViewer(GraphBlock):
@@ -174,7 +186,7 @@ class WaveformViewer(GraphBlock):
         self.lower_ax = None
 
         self.time_array = np.linspace(self.MIN_TIME, self.MAX_TIME, 100)
-        self.phi_array = self.time_array / (self.MAX_TIME - self.MIN_TIME) * np.pi * 4
+        self.period = 20
 
         super().__init__(*args, **kwargs)
 
@@ -185,7 +197,7 @@ class WaveformViewer(GraphBlock):
         self.upper_ax = fig.add_subplot(211)
         self.lower_ax = fig.add_subplot(212)
 
-        self.upper_ax.plot(self.time_array, self.SQRT_TWO * np.sin(self.phi_array), 'r', label='Voltage', zorder=10)
+        self.upper_ax.plot(self.time_array, self.SQRT_TWO * self.voltage.get() * np.sin(self.period * self.time_array), 'r', label='Voltage', zorder=10)
 
         self.refresh()
 
@@ -194,90 +206,84 @@ class WaveformViewer(GraphBlock):
 
     def refresh(self):
         # Plot waveforms on the upper axis
-        active_power = np.cos(self.phi.get())
-        apparent_current = self.SQRT_TWO * np.sin(self.phi_array - self.phi.get())
-        current_plot = self.upper_ax.plot(self.time_array, apparent_current,
-                                          'g', label='Current', alpha=1.0 if active_power > 0 else 0.3)[0]
-        current_alpha_plot = self.upper_ax.plot(self.time_array, -apparent_current,
-                                                'g', alpha=0.3 if active_power > 0 else 1.0)[0]
+        power_sign = np.sign(np.cos(self.phi.get()))
+        voltage_wave = self.SQRT_TWO * np.sin(self.period * self.time_array)
+        current_wave = self.SQRT_TWO * np.sin(self.period * self.time_array - self.phi.get()) * self.current.get()
+
+        current_plot = self.upper_ax.plot(self.time_array, current_wave,
+                                          'g', label='Current', alpha=1.0 if power_sign > 0 else 0.3)[0]
+        current_alpha_plot = self.upper_ax.plot(self.time_array, -current_wave,
+                                                'g', alpha=0.3 if power_sign > 0 else 1.0)[0]
         self.transient_plot_objects.extend([current_plot, current_alpha_plot])
 
         # Plot waveforms on the lower axis
-        active_wave = self.SQRT_TWO * np.cos(self.phi.get()) * np.sin(self.phi_array)
-        active_wave_plot = self.lower_ax.plot(self.time_array, active_wave,
-                                              'b', label='Active Current')[0]
+        apparent_power = voltage_wave * current_wave
+        # https://www.electronics-tutorials.ws/accircuits/power-in-ac-circuits.html
 
-        reactive_wave = self.SQRT_TWO * np.sin(self.phi.get()) * np.sin(self.phi_array - np.pi / 2)
-        reactive_wave_plot = self.lower_ax.plot(self.time_array, reactive_wave,
-                                                color='orange', label='Reactive Current')[0]
+        # apparent_power_peak = self.SQRT_TWO * self.voltage.get() * self.current.get()
+        active_power_wave = apparent_power_peak * np.sin(self.period * self.time_array - self.phi.get())
+        active_power_plot = self.lower_ax.plot(self.time_array, active_power_wave,
+                                               'b', label='Active Power')[0]
 
-        summed_wave = active_wave + reactive_wave
-        summed_wave_plot = self.lower_ax.plot(self.time_array, summed_wave,
-                                              color='k', label='Apparent Current')[0]
+        reactive_power_wave = apparent_power_peak * np.cos(self.period * self.time_array - self.phi.get())
+        reactive_power_plot = self.lower_ax.plot(self.time_array, reactive_power_wave,
+                                                 color='orange', label='Reactive Power')[0]
 
-        self.transient_plot_objects.extend([active_wave_plot, reactive_wave_plot, summed_wave_plot])
+        summed_power_wave = active_power_wave + reactive_power_wave
+        summed_power_plot = self.lower_ax.plot(self.time_array, summed_power_wave,
+                                               color='k', label='Apparent Power')[0]
+
+        self.transient_plot_objects.extend([active_power_plot, reactive_power_plot, summed_power_plot])
 
 
 class GraphOptionsPane(GUIBlock):
     def __init__(self, parent):
         super().__init__(parent)
 
+        self.phi.trace_add('write', self._calculate_variables)
+        self.voltage.trace_add('write', self._calculate_variables)
+        self.current.trace_add('write', self._calculate_variables)
+
         phi_scale_frame = ttk.Frame(self.frame)
         phi_scale_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=False)
         phi_scale_frame.columnconfigure(2, weight=1)
 
-        self.phi.trace_add('write', self._round_vars)
-
         variables_frame = ttk.Frame(self.frame)
         variables_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=False)
 
-        self.rms_voltage = tk.DoubleVar(name='Vrms', value=1)
-        self.cos_phi_pf = tk.DoubleVar(name='cos(phi)')
-        self.p_over_s_pf = tk.DoubleVar(name='P/S')
-        row_1 = [self.rms_voltage, self.cos_phi_pf, self.p_over_s_pf]
+        self.voltage_str = tk.StringVar(name='Vrms')
+        self.current_str = tk.StringVar(name='Irms')
+        self.cos_phi_str = tk.StringVar(name='cos(φ)')
+        row_1 = [self.voltage_str, self.current_str, self.cos_phi_str]
 
-        self.apparent_current = tk.DoubleVar(name='Ia', value=1)
-        self.active_current = tk.DoubleVar(name='I')
-        self.reactive_current = tk.DoubleVar(name='Ir')
-        row_2 = [self.apparent_current, self.active_current, self.reactive_current]
+        self.apparent_power_str = tk.StringVar(name='S')
+        self.active_power_str = tk.StringVar(name='P')
+        self.reactive_power_str = tk.StringVar(name='Q')
+        row_2 = [self.apparent_power_str, self.active_power_str, self.reactive_power_str]
 
-        self.apparent_power = tk.DoubleVar(name='S')
-        self.active_power = tk.DoubleVar(name='P')
-        self.reactive_power = tk.DoubleVar(name='Q')
-        row_3 = [self.apparent_power, self.active_power, self.reactive_power]
-
-        self.phi.trace_add('write', self._calculate_variables)
-
-        for i, row in enumerate([row_1, row_2, row_3]):
+        for i, row in enumerate([row_1, row_2]):
             for j, var in enumerate(row):
                 ttk.Label(variables_frame, text=f'{var._name} =', style='Text.TLabel').grid(
-                    row=i, column=2 * j, sticky=tk.W, padx=5, pady=5)
-                ttk.Label(variables_frame, textvariable=var, style='Text.TLabel', width=6, justify='right').grid(
-                    row=i, column=2 * j + 1, sticky=tk.W, padx=5, pady=5)
+                    row=i, column=2 * j, sticky=tk.W, padx=(10, 0), pady=10)
+                ttk.Label(variables_frame, textvariable=var, style='Text.TLabel', width=4, anchor='e').grid(
+                    row=i, column=2 * j + 1, sticky=tk.W, padx=(0, 10), pady=10)
 
-    def _round_vars(self, *_):
-        for var_name in [
-            'phi',
-            'rms_voltage', 'cos_phi_pf', 'p_over_s_pf',
-            'apparent_current', 'active_current', 'reactive_current',
-            'apparent_power', 'active_power', 'reactive_power',
-        ]:
-            var = getattr(self, var_name)
-            var.set(round(var.get(), 2))
+        self._calculate_variables()
 
     def _calculate_variables(self, *_):
-        self.cos_phi_pf.set(np.cos(self.phi.get()))
+        self.voltage_str.set(f"{self.voltage.get():.2f}")
+        self.current_str.set(f"{self.current.get():.2f}")
+        self.cos_phi_str.set(f"{np.cos(self.phi.get()):.2f}")
 
-        self.active_current.set(self.apparent_current.get() * np.cos(self.phi.get()))
-        self.reactive_current.set(self.apparent_current.get() * np.sin(self.phi.get()))
+        apparent_power = self.voltage.get() * self.current.get()
+        active_power = apparent_power * np.cos(self.phi.get())
+        reactive_power = apparent_power * np.sin(self.phi.get())
 
-        self.apparent_power.set(self.rms_voltage.get() * self.apparent_current.get())
-        self.active_power.set(self.apparent_power.get() * np.cos(self.phi.get()))
-        self.reactive_power.set(self.apparent_current.get() * np.sin(self.phi.get()))
-
-        self.p_over_s_pf.set(self.active_power.get() / self.apparent_power.get())
+        self.apparent_power_str.set(f"{apparent_power:.2f}")
+        self.active_power_str.set(f"{active_power:.2f}")
+        self.reactive_power_str.set(f"{reactive_power:.2f}")
 
 
 class PowerQuadrantsGUI(GUIBlock):
