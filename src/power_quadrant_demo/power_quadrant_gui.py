@@ -178,6 +178,8 @@ class WaveformViewer(GraphBlock):
     """
     DIMENSIONS = 5, 5
     MIN_TIME, MAX_TIME = -10, 30
+    PERIOD = 20
+    OMEGA = 2 * np.pi / PERIOD
 
     SQRT_TWO = 2 ** 0.5
 
@@ -186,7 +188,6 @@ class WaveformViewer(GraphBlock):
         self.lower_ax = None
 
         self.time_array = np.linspace(self.MIN_TIME, self.MAX_TIME, 100)
-        self.period = 20
 
         super().__init__(*args, **kwargs)
 
@@ -197,7 +198,7 @@ class WaveformViewer(GraphBlock):
         self.upper_ax = fig.add_subplot(211)
         self.lower_ax = fig.add_subplot(212)
 
-        self.upper_ax.plot(self.time_array, self.SQRT_TWO * self.voltage.get() * np.sin(self.period * self.time_array), 'r', label='Voltage', zorder=10)
+        self.upper_ax.plot(self.time_array, self.SQRT_TWO * self.voltage.get() * np.sin(self.OMEGA * self.time_array), 'r', label='Voltage', zorder=10)
 
         self.refresh()
 
@@ -207,8 +208,8 @@ class WaveformViewer(GraphBlock):
     def refresh(self):
         # Plot waveforms on the upper axis
         power_sign = np.sign(np.cos(self.phi.get()))
-        voltage_wave = self.SQRT_TWO * np.sin(self.period * self.time_array)
-        current_wave = self.SQRT_TWO * np.sin(self.period * self.time_array - self.phi.get()) * self.current.get()
+        voltage_wave = self.SQRT_TWO * np.sin(self.OMEGA * self.time_array)
+        current_wave = self.SQRT_TWO * np.sin(self.OMEGA * self.time_array - self.phi.get()) * self.current.get()
 
         current_plot = self.upper_ax.plot(self.time_array, current_wave,
                                           'g', label='Current', alpha=1.0 if power_sign > 0 else 0.3)[0]
