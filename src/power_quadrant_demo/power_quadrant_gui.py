@@ -251,6 +251,7 @@ class WaveformViewer(GraphBlock):
         self.lower_ax.legend(loc='upper right')
 
     def refresh(self):
+        # Plot waveforms on the upper axis
         power_sign = np.sign(np.cos(self.phi.get()))
 
         # Convert voltage/current rms values to phasors
