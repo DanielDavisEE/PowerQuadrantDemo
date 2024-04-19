@@ -9,3 +9,6 @@ IEEE 1547 and IEC 61850-7-420 for distributed energy resources (DER).
  - https://clouglobal.com/the-four-quadrant-diagram-in-electricity-metering/
  - http://www.ee.ic.ac.uk/hp/staff/dmb/courses/ccts1/01400_AcPower.pdf
  - https://edisciplinas.usp.br/pluginfile.php/1589271/mod_resource/content/1/IEEE%20Std%201459-2010.pdf
+ - https://yasirarafin.com/can-synchronous-generator-generates-reactive-power/
+ - https://www.electricalpereview.com/leading-lagging-cheat-sheet/
+ - https://www2.clarku.edu/faculty/djoyce/trig/identities.html
