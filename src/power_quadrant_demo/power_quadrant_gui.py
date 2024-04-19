@@ -31,6 +31,12 @@ class GUIBlock(abc.ABC):
     voltage = tk.DoubleVar(root, name='VoltageRMS', value=1.)
     current = tk.DoubleVar(root, name='CurrentRMS', value=1.)
 
+    pf_sign_convention = tk.StringVar(name='SignConvention', value='EEI')
+    pf_sign_converions = {
+        'EEI': lambda phi: np.cos(phi) * -np.sign(np.sin(phi)),
+        'IEC': lambda phi: np.cos(phi)
+    }
+
     _gui_block_instances = set()
 
     def __init__(self, parent):
@@ -63,6 +69,12 @@ class GUIBlock(abc.ABC):
         """
         An optional method for running additional setup code after __init__
         """
+
+    # ----- Application specific code -----
+
+    @property
+    def power_factor(self):
+        return self.pf_sign_converions[self.pf_sign_convention.get()](self.phi.get())
 
 
 class GraphBlock(GUIBlock, metaclass=abc.ABCMeta):
@@ -120,6 +132,7 @@ class QuadrantViewer(GraphBlock):
         self.phi_str = tk.StringVar(name='PhiStr', value=f"{self.phi.get():z5.2f}")
 
         self.phi.trace_add('write', lambda *_: self.phi_str.set(f"{self.phi.get():z5.2f}"))
+        self.pf_sign_convention.trace_add('write', self._refresh)
 
     def setup(self):
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
@@ -190,8 +203,22 @@ class QuadrantViewer(GraphBlock):
         self.transient_plot_objects.append(self.ax.plot([0, x], [0, y], '--', color='gray')[0])
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
 
-        # Label with the value of phi
+        # Label with the value of phi of PF
         self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.phi_str.get()}', fontfamily='monospace'))
+
+        horizontal_alignment = {
+            0: 'left',
+            1: 'center',
+            2: 'right'
+        }[round(abs(self.phi.get()), 1) // (np.pi / 3)]
+        vertical_alignment = {
+            True: 'bottom',
+            False: 'top'
+        }[self.phi.get() > 0]
+        x = apparent_power * 1.05 * np.cos(self.phi.get())
+        y = apparent_power * 1.05 * np.sin(self.phi.get())
+        self.transient_plot_objects.append(self.ax.text(x, y, f'PF = {self.power_factor:z.2f}', fontfamily='monospace',
+                                                        ha=horizontal_alignment, va=vertical_alignment))
 
 
 class WaveformViewer(GraphBlock):
@@ -213,7 +240,7 @@ class WaveformViewer(GraphBlock):
         self.lower_ax = None
 
         self.time_array = np.linspace(self.MIN_TIME, self.MAX_TIME, 100)
-        self.phase_array = np.sin(self.OMEGA * self.time_array) + 1j * np.cos(self.OMEGA * self.time_array)
+        self.phase_array = np.exp(1j * self.OMEGA * self.time_array)
 
     def setup(self):
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
@@ -256,7 +283,7 @@ class WaveformViewer(GraphBlock):
 
         # Convert voltage/current rms values to phasors
         voltage_phasor = self.SQRT_TWO * self.voltage.get() + 0j
-        current_phasor = self.SQRT_TWO * self.current.get() * cmath.rect(1., self.phi.get())
+        current_phasor = self.SQRT_TWO * self.current.get() * cmath.rect(1., -self.phi.get())
 
         # Build waveforms from phasors
         voltage_wave = np.real(voltage_phasor * self.phase_array)
@@ -343,7 +370,6 @@ class GraphOptionsPane(GUIBlock):
             side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # TODO: Review http://sunspec.org/wp-content/uploads/2016/08/DERPowerValueEncodingv6.pdf
-        self.pf_sign_convention = tk.StringVar(value='EEI', name='SignConvention')
         ttk.Label(pf_convention_frame, text='PF Sign Convention:', style='Text.TLabel').pack(
             side=tk.LEFT, fill=tk.BOTH, expand=False
         )
@@ -359,17 +385,17 @@ class GraphOptionsPane(GUIBlock):
         self._calculate_variables()
 
     def _calculate_variables(self, *_):
-        self.voltage_str.set(f"{self.voltage.get():.2f}")
-        self.current_str.set(f"{self.current.get():.2f}")
-        self.cos_phi_str.set(f"{np.cos(self.phi.get()):.2f}")
+        self.voltage_str.set(f"{self.voltage.get():z.2f}")
+        self.current_str.set(f"{self.current.get():z.2f}")
+        self.cos_phi_str.set(f"{np.cos(self.phi.get()):z.2f}")
 
         apparent_power = self.voltage.get() * self.current.get()
         active_power = apparent_power * np.cos(self.phi.get())
         reactive_power = apparent_power * np.sin(self.phi.get())
 
-        self.apparent_power_str.set(f"{apparent_power:.2f}")
-        self.active_power_str.set(f"{active_power:.2f}")
-        self.reactive_power_str.set(f"{reactive_power:.2f}")
+        self.apparent_power_str.set(f"{apparent_power:z.2f}")
+        self.active_power_str.set(f"{active_power:z.2f}")
+        self.reactive_power_str.set(f"{reactive_power:z.2f}")
 
 
 class PowerQuadrantsGUI(GUIBlock):
