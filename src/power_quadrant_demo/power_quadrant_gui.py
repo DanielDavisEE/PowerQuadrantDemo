@@ -19,13 +19,24 @@ class GUIBlock(abc.ABC):
     """
     An abstract base class for
     """
+    _gui_block_instances = set()
+
+    # Shared GUI attributes
     root = tk.Tk()
 
-    style = ttk.Style(root)
-    style.configure('Header.TLabel', font=('Helvetica', 14))
-    style.configure('SubHeader.TLabel', font=('Helvetica', 12))
-    style.configure('Text.TLabel', font=('Helvetica', 12))
-    style.configure('Text.TRadiobutton', font=('Helvetica', 12))
+    _body_font_size = 12
+    _style = ttk.Style(root)
+    _style.configure('Header.TLabel', font=('Helvetica', 18))
+    _style.configure('SubHeader.TLabel', font=('Helvetica', 16))
+    _style.configure('Body.TLabel', font=('Helvetica', _body_font_size))
+    # _style.configure('Body.TFrame', background='red')
+    _style.configure('Body.TRadiobutton', font=('Helvetica', _body_font_size))
+    _style.configure('Body.TButton', font=('Helvetica', _body_font_size))
+    # FLAT
+    # RAISED
+    # SUNKEN
+    # GROOVE
+    # RIDGE
 
     phi = tk.DoubleVar(root, name='Phi', value=0.)
     voltage = tk.DoubleVar(root, name='VoltageRMS', value=1.)
@@ -37,7 +48,22 @@ class GUIBlock(abc.ABC):
         'IEC': lambda phi: np.cos(phi)
     }
 
-    _gui_block_instances = set()
+    # Quadrant attributes
+    exporting_real = tk.BooleanVar(name='Exporting Real', value=False)
+    importing_real = tk.BooleanVar(name='Importing Real', value=False)
+    overexcited = tk.BooleanVar(name='Over Excited', value=False)
+    underexcited = tk.BooleanVar(name='Under Excited', value=False)
+    leading = tk.BooleanVar(name='Current Leading', value=False)
+    lagging = tk.BooleanVar(name='Current Lagging', value=False)
+    positive_pf = tk.BooleanVar(name='Positive PF', value=False)
+    negative_pf = tk.BooleanVar(name='Negative PF', value=False)
+
+    quadrant_attributes = (
+        (exporting_real, importing_real),
+        (overexcited, underexcited),
+        (leading, lagging),
+        (positive_pf, negative_pf),
+    )
 
     def __init__(self, parent):
         super().__init__()
@@ -358,28 +384,53 @@ class GraphOptionsPane(GUIBlock):
                 if i >= len(row):
                     continue
 
-                ttk.Label(col_frame, text=f'{row[j]._name}', style='Text.TLabel').grid(
-                    row=i, column=0, sticky=tk.W, padx=(5, 0), pady=5)
-                ttk.Label(col_frame, text=f'=', style='Text.TLabel').grid(
+                ttk.Label(col_frame, text=f'{row[j]._name}', style='Body.TLabel').grid(
+                    row=i, column=0, sticky=tk.W, padx=5, pady=5)
+                ttk.Label(col_frame, text=f'=', style='Body.TLabel').grid(
                     row=i, column=1, sticky=tk.W, padx=0, pady=5)
-                ttk.Label(col_frame, textvariable=row[j], style='Text.TLabel', width=4, anchor='e').grid(
-                    row=i, column=2, sticky=tk.W, padx=(0, 5), pady=5)
+                ttk.Label(col_frame, textvariable=row[j], style='Body.TLabel', width=4, anchor='e').grid(
+                    row=i, column=2, sticky=tk.W, padx=5, pady=5)
 
         pf_convention_frame = ttk.Frame(self.frame)
         pf_convention_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # TODO: Review http://sunspec.org/wp-content/uploads/2016/08/DERPowerValueEncodingv6.pdf
-        ttk.Label(pf_convention_frame, text='PF Sign Convention:', style='Text.TLabel').pack(
-            side=tk.LEFT, fill=tk.BOTH, expand=False
+        ttk.Label(pf_convention_frame, text='PF Sign Convention:', style='Body.TLabel').pack(
+            side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5
         )
         for sign_convention in ['EEI', 'IEC']:
             ttk.Radiobutton(pf_convention_frame,
                             text=sign_convention,
                             value=sign_convention,
                             variable=self.pf_sign_convention,
-                            style='Text.TRadiobutton').pack(
-                side=tk.LEFT, fill=tk.BOTH, expand=False, padx=10, pady=5)
+                            style='Body.TRadiobutton').pack(
+                side=tk.LEFT, fill=tk.BOTH, expand=False, padx=20, pady=5)
+
+        quadrant_attributes_frame = ttk.Frame(self.frame, style='Body.TFrame')
+        quadrant_attributes_frame.pack(
+            side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        for j, attribute_pair in enumerate(self.quadrant_attributes):
+            for i, var in enumerate(attribute_pair):
+                quadrant_attributes_frame.columnconfigure(i, weight=1)
+                button = ttk.Button(quadrant_attributes_frame,
+                                    text=var._name,
+                                    style='Body.TButton',
+                                    command=lambda var_=var: var_.set(not var_.get()))
+                button.grid(row=i, column=j, sticky=tk.EW, padx=5, pady=(5, 0))
+
+                var.trace_add('write',
+                              lambda *_, var_pair_=attribute_pair, var_=var, button_=button:
+                              self.set_button_pair_state(var_pair_, var_, button_))
+
+    def set_button_pair_state(self, var_pair, var_clicked, button_clicked):
+        var_list = list(var_pair)
+        var_list.remove(var_clicked)
+        var_not_clicked = var_list[0]
+
+        if var_clicked.get():
+            var_not_clicked.set(False)
+            button_clicked.state(['pressed'])
 
     def setup(self):
         self._calculate_variables()
@@ -409,9 +460,9 @@ class PowerQuadrantsGUI(GUIBlock):
         left_block = ttk.Frame(self.frame)
         left_block.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        QuadrantViewer(left_block).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-        GraphOptionsPane(left_block).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-        WaveformViewer(self.frame).pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
+        QuadrantViewer(left_block).pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        GraphOptionsPane(left_block).pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        WaveformViewer(self.frame).pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def init(self):
         super().init()
