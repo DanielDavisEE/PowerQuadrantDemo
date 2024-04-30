@@ -15,26 +15,55 @@ from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg)
 from matplotlib.figure import Figure
 
-tk.Tk()
+
+class DisplayVariables:
+    _inst = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._inst:
+            return cls._inst
+        self = super().__new__(*args, **kwargs)
+        cls._inst = self
+
+        self.phi_str = tk.StringVar(name='PhiStr', value='NaN')
+        self.voltage_str = tk.StringVar(name='Vrms', value='NaN')
+        self.current_str = tk.StringVar(name='Irms', value='NaN')
+        self.cos_phi_str = tk.StringVar(name='cos(φ)', value='NaN')
+        self.apparent_power_str = tk.StringVar(name='S', value='NaN')
+        self.active_power_str = tk.StringVar(name='P', value='NaN')
+        self.reactive_power_str = tk.StringVar(name='Q', value='NaN')
+
+        return self
+
+    def __init__(self, model):
+        self.model = model
+
+    def refresh(self):
+        self.phi_str.set(f"{self.model.phi:z5.2f}")
+
+        self.voltage_str.set(f"{self.model.voltage_rms:z.2f}")
+        self.current_str.set(f"{self.model.current_rms:z.2f}")
+        self.cos_phi_str.set(f"{np.cos(self.model.phi):z.2f}")
+
+        apparent_power = self.model.voltage_rms * self.model.current_rms
+        active_power = apparent_power * np.cos(self.model.phi)
+        reactive_power = apparent_power * np.sin(self.model.phi)
+
+        self.apparent_power_str.set(f"{apparent_power:z.2f}")
+        self.active_power_str.set(f"{active_power:z.2f}")
+        self.reactive_power_str.set(f"{reactive_power:z.2f}")
 
 
 class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
     """
     An abstract base class for
     """
-    # Shared display variables
-    phi_str = tk.StringVar(name='PhiStr')
-    voltage_str = tk.StringVar(name='Vrms')
-    current_str = tk.StringVar(name='Irms')
-    cos_phi_str = tk.StringVar(name='cos(φ)')
-    apparent_power_str = tk.StringVar(name='S')
-    active_power_str = tk.StringVar(name='P')
-    reactive_power_str = tk.StringVar(name='Q')
 
     def __init__(self, parent, model):
         super().__init__(parent)
-        
+
         self.model = model
+        self.display_variables = DisplayVariables()
 
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.setLevel(logging.DEBUG)
@@ -43,6 +72,12 @@ class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
         """
         An optional method for running additional setup code after __init__
         """
+
+    def _refresh(self):
+        """
+        A private caller for refresh to allow more complicated behaviour with inheritance
+        """
+        self.refresh()
 
     def refresh(self):
         """
@@ -60,13 +95,6 @@ class GraphBlock(MyFrame, metaclass=abc.ABCMeta):
 
         self.canvas = None
         self.transient_plot_objects = []
-
-    def _setup(self, *_):
-        super()._setup()
-
-        self.refresh()
-
-        self.canvas.draw()
 
     def _refresh(self, *_):
         for _ in range(len(self.transient_plot_objects)):
@@ -107,6 +135,8 @@ class QuadrantViewer(GraphBlock):
         # self.model.state_count.trace_add('write', lambda *_: self.phi_str.set(f"{self.model.phi:z5.2f}"))
 
     def setup(self):
+        self.log.debug('Setting up QuadrantViewer')
+
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
         self.canvas = self.create_canvas(fig)
         self.canvas.mpl_connect('button_press_event', self._button_press_handler)
@@ -172,7 +202,7 @@ class QuadrantViewer(GraphBlock):
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
 
         # Label with the value of phi of PF
-        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.phi_str.get()}', 
+        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.display_variables.phi_str.get()}',
                                                         fontfamily='monospace'))
 
         horizontal_alignment = {
@@ -213,10 +243,12 @@ class WaveformViewer(GraphBlock):
         self.phase_array = np.exp(1j * self.OMEGA * self.time_array)
 
     def setup(self):
+        self.log.debug('Setting up WaveformViewer')
+
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
         self.canvas = self.create_canvas(fig)
 
-        peak_power = (self.SQRT_TWO * self.voltage.get()) * (self.SQRT_TWO * self.current.get())
+        peak_power = (self.SQRT_TWO * self.model.voltage_rms) * (self.SQRT_TWO * self.model.current_rms)
 
         self.upper_ax, self.middle_ax, self.lower_ax = fig.subplots(
             nrows=3, ncols=1, sharex=True, sharey=True,
@@ -249,14 +281,14 @@ class WaveformViewer(GraphBlock):
 
     def refresh(self):
         # Plot waveforms on the upper axis
-        power_sign = np.sign(np.cos(self.phi.get()))
+        power_sign = np.sign(np.cos(self.model.phi))
 
         # Plot waveforms on the upper axis
         voltage_plot = self.upper_ax.plot('time', 'voltage', data=self.model.waveforms,
                                           color='r', label='Voltage', zorder=3)[0]
         current_plot = self.upper_ax.plot('time', 'current', data=self.model.waveforms,
                                           color='g', label='Current', alpha=1.0 if power_sign > 0 else 0.3)[0]
-        current_inverse_plot = self.upper_ax.plot('time', -self.model.waveforms['current'], data=self.model.waveforms,
+        current_inverse_plot = self.upper_ax.plot(self.model.waveforms['time'], -self.model.waveforms['current'],
                                                   color='g', alpha=0.3 if power_sign > 0 else 1.0)[0]
         self.transient_plot_objects.extend([voltage_plot, current_plot, current_inverse_plot])
 
@@ -266,7 +298,7 @@ class WaveformViewer(GraphBlock):
         reactive_current_plot = self.middle_ax.plot('time', 'reactive_current', data=self.model.waveforms,
                                                     color='orange', label='Reactive Current')[0]
         summed_current_plot = self.middle_ax.plot('time', 'summed_current', data=self.model.waveforms,
-                                                  color='--k', label='Apparent Current')[0]
+                                                  color='k', linestyle='--', label='Apparent Current')[0]
         self.transient_plot_objects.extend([active_current_plot, reactive_current_plot, summed_current_plot])
 
         # Plot power waveforms on the lower axis
@@ -275,7 +307,7 @@ class WaveformViewer(GraphBlock):
         reactive_power_plot = self.lower_ax.plot('time', 'reactive_power', data=self.model.waveforms,
                                                  color='orange', label='Reactive Power')[0]
         apparent_power_wave = self.lower_ax.plot('time', 'apparent_power', data=self.model.waveforms,
-                                                 color='--k', label='Apparent Power')[0]
+                                                 color='k', linestyle='--', label='Apparent Power')[0]
         self.transient_plot_objects.extend([active_power_plot, reactive_power_plot, apparent_power_wave])
 
 
@@ -287,8 +319,8 @@ class GraphOptionsPane(MyFrame):
         variables_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        row_1 = [self.voltage_str, self.current_str, self.cos_phi_str]
-        row_2 = [self.apparent_power_str, self.active_power_str, self.reactive_power_str]
+        row_1 = [self.display_variables.voltage_str, self.display_variables.current_str, self.display_variables.cos_phi_str]
+        row_2 = [self.display_variables.apparent_power_str, self.display_variables.active_power_str, self.display_variables.reactive_power_str]
 
         column_count = max(len(row_1), len(row_2))
         for j in range(column_count):
@@ -325,8 +357,10 @@ class GraphOptionsPane(MyFrame):
 
 class View:
     def __init__(self, root, model):
-        super().__init__(root, model)
+        self.root = root
+        self.model = model
 
+        self.components: list[MyFrame] = []
 
         self.frame = ttk.Frame(root)
         self.frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -334,17 +368,24 @@ class View:
         left_block = ttk.Frame(self.frame)
         left_block.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.components: list[MyFrame] = [
-            QuadrantViewer(left_block, model).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-            GraphOptionsPane(left_block, model).pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=5, pady=5)
-            WaveformViewer(self.frame, model).pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
-        ]
-        self.setup()
+        component = QuadrantViewer(left_block, self.model)
+        component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.components.append(component)
+
+        component = GraphOptionsPane(left_block, self.model)
+        component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.components.append(component)
+
+        component = WaveformViewer(self.frame, self.model)
+        component.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.components.append(component)
 
     def setup(self):
         for component in self.components:
             component.setup()
 
     def refresh(self):
+        self.update_display_variables()
+
         for component in self.components:
-            component.refresh()
+            component._refresh()

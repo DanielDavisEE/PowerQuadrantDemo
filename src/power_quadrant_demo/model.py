@@ -28,10 +28,10 @@ class Model:
     current_angle: float
     pf_sign_convention: str
 
-    def __init__(self):
+    def __init__(self, root):
         self.log = logging.getLogger('Model')
 
-        self.root = tk.Tk()
+        self.root = root
 
         style = ttk.Style(self.root)
         style.configure('Header.TLabel', font=('Helvetica', 14))
@@ -46,11 +46,11 @@ class Model:
         self._current_angle = tk.DoubleVar(self.root, name='CurrentTheta', value=0.)
         self._pf_sign_convention = tk.StringVar(name='SignConvention', value='EEI')
 
-        self._voltage_rms.trace_add('write', self.refresh)
-        self._voltage_angle.trace_add('write', self.refresh)
-        self._current_rms.trace_add('write', self.refresh)
-        self._current_angle.trace_add('write', self.refresh)
-        self._pf_sign_convention.trace_add('write', self.refresh)
+        self._voltage_rms.trace_add('write', lambda *_: self.refresh())
+        self._voltage_angle.trace_add('write', lambda *_: self.refresh())
+        self._current_rms.trace_add('write', lambda *_: self.refresh())
+        self._current_angle.trace_add('write', lambda *_: self.refresh())
+        self._pf_sign_convention.trace_add('write', lambda *_: self.refresh())
 
         self.pf_sign_conversions = {
             'EEI': lambda phi: np.cos(phi) * -np.sign(np.sin(phi)),
@@ -79,12 +79,16 @@ class Model:
 
         raise AttributeError(f"{self.__class__.__name__} has no attribute '{item}'")
 
+
     def __setattr__(self, key, value):
         """
         Streamline setting values from tk Variable state values
         """
         if key[0] != '_' and hasattr(self, '_' + key):
             getattr(self, '_' + key).set(value)
+            return
+
+        super().__setattr__(key, value)
 
     @property
     def phi(self):
@@ -92,6 +96,10 @@ class Model:
         Returns the power angle, phi, from the voltage and current angles
         """
         return self.voltage_angle - self.current_angle
+
+    @phi.setter
+    def phi(self, value):
+        self.current_angle = self.voltage_angle - value
 
     @property
     def power_factor(self):
@@ -101,9 +109,9 @@ class Model:
         return self.pf_sign_conversions[self.pf_sign_convention](self.phi)
 
     def process_phi_change(self, x_coord, y_coord):
-        self.phi.set(np.arctan2(y_coord, x_coord))
+        self.phi = np.arctan2(y_coord, x_coord)
         apparent_power = min(1., (y_coord ** 2 + x_coord ** 2) ** 0.5)
-        self.current.set(apparent_power / self.voltage.get())
+        self.current_rms = apparent_power / self.voltage_rms
 
     def refresh(self):
         """
