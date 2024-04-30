@@ -1,5 +1,5 @@
 """
-
+Model component of the GUI
 """
 
 import cmath
@@ -10,10 +10,8 @@ from tkinter import ttk
 import numpy as np
 import pandas as pd
 
-LOG = logging.getLogger('PowerQuadrantState')
 
-
-class PowerQuadrantState:
+class Model:
     """
     A shared state container for the power quadrant gui
     """
@@ -31,6 +29,8 @@ class PowerQuadrantState:
     pf_sign_convention: str
 
     def __init__(self):
+        self.log = logging.getLogger('Model')
+
         self.root = tk.Tk()
 
         style = ttk.Style(self.root)
@@ -68,25 +68,23 @@ class PowerQuadrantState:
 
         self.refresh()
 
-        LOG.debug('Configured state variables')
+        self.log.debug('Configured model')
 
     def __getattr__(self, item):
         """
         Streamline getting values from tk Variable state values
         """
-        if hasattr(self, '_' + item):
+        if item[0] != '_' and hasattr(self, '_' + item):
             return getattr(self, '_' + item).get()
-        
+
         raise AttributeError(f"{self.__class__.__name__} has no attribute '{item}'")
 
     def __setattr__(self, key, value):
         """
         Streamline setting values from tk Variable state values
         """
-        if hasattr(self, '_' + key):
+        if key[0] != '_' and hasattr(self, '_' + key):
             getattr(self, '_' + key).set(value)
-
-        raise AttributeError(f"{self.__class__.__name__} has no attribute '{key}'")
 
     @property
     def phi(self):
@@ -101,6 +99,11 @@ class PowerQuadrantState:
         Returns the power factor with the chosen sign convention
         """
         return self.pf_sign_conversions[self.pf_sign_convention](self.phi)
+
+    def process_phi_change(self, x_coord, y_coord):
+        self.phi.set(np.arctan2(y_coord, x_coord))
+        apparent_power = min(1., (y_coord ** 2 + x_coord ** 2) ** 0.5)
+        self.current.set(apparent_power / self.voltage.get())
 
     def refresh(self):
         """
@@ -122,4 +125,4 @@ class PowerQuadrantState:
         self.waveforms['reactive_power'] = self.waveforms['voltage'] * self.waveforms['reactive_current']
         self.waveforms['apparent_power'] = self.waveforms['voltage'] * self.waveforms['current']
 
-        self.state_count.set(self.state_count.get() + 1)
+        self.state_count.set((self.state_count.get() + 1) % 0xff)
