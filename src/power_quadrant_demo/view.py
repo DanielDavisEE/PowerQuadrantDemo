@@ -20,6 +20,7 @@ class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
     """
     An abstract base class for custom
     """
+    gui_instances = set()
 
     def __init__(self, parent, model):
         self.log = logging.getLogger(self.__class__.__name__)
@@ -35,17 +36,29 @@ class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
 
         self.model = model
 
+        self.gui_instances.add(self)
+
+    @classmethod
+    def setup_all(cls):
+        """
+        Runs the setup method of all gui components contained by the view
+        """
+        for instance in cls.gui_instances:
+            instance.setup()
+
+    @classmethod
+    def refresh_all(cls):
+        """
+        Runs the refresh method of all gui components contained by the view
+        """
+        for instance in cls.gui_instances:
+            instance.refresh()
+
     def setup(self):
         """
         An optional method for running additional setup code after __init__
         """
         self.log.debug('Running setup')
-
-    def _refresh(self):
-        """
-        A private caller for refresh to allow more complicated behaviour with inheritance
-        """
-        self.refresh()
 
     def refresh(self):
         """
@@ -64,25 +77,29 @@ class GraphBlock(MyFrame, metaclass=abc.ABCMeta):
         self.canvas = None
         self.transient_plot_objects = []
 
-    def _refresh(self, *_):
-        for _ in range(len(self.transient_plot_objects)):
-            self.transient_plot_objects.pop().remove()
-
-        self.refresh()
-
-        self.canvas.draw()
+    def setup(self):
+        super().setup()
 
     def create_canvas(self, fig: Figure) -> FigureCanvasTkAgg:
         """
-        From a given matplotlib Figure, create and return a canvas which has been added to the
-        .
+        From a given matplotlib Figure, create and return a canvas which has been added to the figure
         """
         canvas = FigureCanvasTkAgg(fig, master=self)  # A tk.DrawingArea.
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         return canvas
 
+    def refresh(self, *_):
+        self.clear_temporary_objects()
+        self.create_temporary_objects()
+
+        self.canvas.draw()
+
+    def clear_temporary_objects(self):
+        for _ in range(len(self.transient_plot_objects)):
+            self.transient_plot_objects.pop().remove()
+
     @abc.abstractmethod
-    def refresh(self): ...
+    def create_temporary_objects(self): ...
 
 
 class QuadrantViewer(GraphBlock):
@@ -143,7 +160,7 @@ class QuadrantViewer(GraphBlock):
         if self._button_held and event.inaxes:
             self.model.process_power_phasor_change(event.xdata, event.ydata)
 
-    def refresh(self):
+    def create_temporary_objects(self):
         apparent_power = self.model.voltage_rms.get() * self.model.current_rms.get()
         power_angle = self.model.power_angle.get()
 
@@ -243,7 +260,7 @@ class WaveformViewer(GraphBlock):
         self.middle_ax.legend(loc='upper right')
         self.lower_ax.legend(loc='upper right')
 
-    def refresh(self):
+    def create_temporary_objects(self):
         # Plot waveforms on the upper axis
         power_sign = np.sign(np.cos(self.model.power_angle.get()))
 
@@ -279,6 +296,7 @@ class GraphOptionsPane(MyFrame):
     """
     The section of the GUI which shows some values and provides some options
     """
+
     def __init__(self, parent, model):
         super().__init__(parent, model)
 
@@ -326,13 +344,12 @@ class View:
     """
     The view component of the MVC gui model
     """
+
     def __init__(self, root, model):
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.debug('Running __init__')
 
         self.root = root
-
-        self.components: list[MyFrame] = []
 
         self.frame = ttk.Frame(root)
         self.frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -340,28 +357,18 @@ class View:
         left_block = ttk.Frame(self.frame)
         left_block.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        component = QuadrantViewer(left_block, model)
-        component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.components.append(component)
-
-        component = GraphOptionsPane(left_block, model)
-        component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.components.append(component)
-
-        component = WaveformViewer(self.frame, model)
-        component.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.components.append(component)
+        QuadrantViewer(left_block, model).pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        GraphOptionsPane(left_block, model).pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        WaveformViewer(self.frame, model).pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def setup(self):
         """
         Runs the setup method of all gui components contained by the view
         """
-        for component in self.components:
-            component.setup()
+        MyFrame.setup_all()
 
     def refresh(self):
         """
         Runs the refresh method of all gui components contained by the view
         """
-        for component in self.components:
-            component._refresh()
+        MyFrame.refresh_all()
