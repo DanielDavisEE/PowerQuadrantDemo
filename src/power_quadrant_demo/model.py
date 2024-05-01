@@ -11,6 +11,35 @@ import numpy as np
 import pandas as pd
 
 
+class VersatileVar:
+    def __init__(self, master=None, value=None, name=None, *, width=None, precision=2):
+        self.name = self._name = name
+
+        self.float_var = tk.DoubleVar(master, value=value, name=name)
+
+        if width is None:
+            width = ''
+
+        self.str_format = f'{{:z{width}.{precision}f}}'
+        self.str_var = tk.StringVar(master, value=self.str_format.format(value), name=f'{name}Str')
+
+    def set(self, value):
+        self.float_var.set(value)
+        self.str_var.set(self.str_format.format(value))
+
+    def get(self):
+        return self.float_var.get()
+
+    def trace_add(self, mode, callback):
+        self.float_var.trace_add(mode, callback)
+
+    def __repr__(self):
+        return self.float_var.get()
+
+    def __str__(self):
+        return self.str_var.get()
+
+
 class Model:
     """
     A shared state container for the power quadrant gui
@@ -21,12 +50,6 @@ class Model:
     OMEGA = 2 * np.pi / PERIOD
 
     SQRT_TWO = 2 ** 0.5
-
-    voltage_rms: float
-    voltage_angle: float
-    current_rms: float
-    current_angle: float
-    pf_sign_convention: str
 
     def __init__(self, root):
         self.log = logging.getLogger('Model')
@@ -40,21 +63,26 @@ class Model:
         style.configure('Text.TRadiobutton', font=('Helvetica', 12))
 
         # State variables
-        self._voltage_rms = tk.DoubleVar(self.root, name='VoltageRMS', value=1.)
-        self._voltage_angle = tk.DoubleVar(self.root, name='VoltageTheta', value=0.)
-        self._current_rms = tk.DoubleVar(self.root, name='CurrentRMS', value=1.)
-        self._current_angle = tk.DoubleVar(self.root, name='CurrentTheta', value=0.)
-        self._pf_sign_convention = tk.StringVar(name='SignConvention', value='EEI')
+        self.voltage_rms = VersatileVar(self.root, name='Vms', value=1.)
+        self.voltage_angle = VersatileVar(self.root, name='VoltageTheta', value=0.)
+        self.current_rms = VersatileVar(self.root, name='Irms', value=1.)
+        self.phi = VersatileVar(self.root, name='Phi', value=0., width=5)
+        self.pf_sign_convention = tk.StringVar(name='SignConvention', value='EEI')
 
-        self._voltage_rms.trace_add('write', lambda *_: self.refresh())
-        self._voltage_angle.trace_add('write', lambda *_: self.refresh())
-        self._current_rms.trace_add('write', lambda *_: self.refresh())
-        self._current_angle.trace_add('write', lambda *_: self.refresh())
-        self._pf_sign_convention.trace_add('write', lambda *_: self.refresh())
+        # Derived State Variables
+        self.current_angle = VersatileVar(self.root, name='CurrentTheta', value=0.)
+        self.cos_phi = VersatileVar(self.root, name='cos(φ)', value=1.)
+        self.power_factor = VersatileVar(self.root, name='PF', value=1.)
+        self.apparent_power = VersatileVar(self.root, name='S', value=1.)
+        self.active_power = VersatileVar(self.root, name='R', value=1.)
+        self.reactive_power = VersatileVar(self.root, name='Q', value=0.)
+
+        self.phi.trace_add('write', lambda *_: self.refresh())
+        self.pf_sign_convention.trace_add('write', lambda *_: self.refresh())
 
         self.pf_sign_conversions = {
-            'EEI': lambda phi: np.cos(phi) * -np.sign(np.sin(phi)),
-            'IEC': lambda phi: np.cos(phi)
+            'EEI': lambda pf: pf * -np.sign(np.sin(self.phi.get())),
+            'IEC': lambda pf: pf
         }
 
         self.waveforms = pd.DataFrame([], columns=['time', 'phase', 'voltage', 'current',
@@ -70,56 +98,34 @@ class Model:
 
         self.log.debug('Configured model')
 
-    def __getattr__(self, item):
+    def process_power_phasor_change(self, x_coord, y_coord):
         """
-        Streamline getting values from tk Variable state values
+        Takes the coordinates of a quadrant graph input and updates phi accordingly
         """
-        if item[0] != '_' and hasattr(self, '_' + item):
-            return getattr(self, '_' + item).get()
-
-        raise AttributeError(f"{self.__class__.__name__} has no attribute '{item}'")
-
-
-    def __setattr__(self, key, value):
-        """
-        Streamline setting values from tk Variable state values
-        """
-        if key[0] != '_' and hasattr(self, '_' + key):
-            getattr(self, '_' + key).set(value)
-            return
-
-        super().__setattr__(key, value)
-
-    @property
-    def phi(self):
-        """
-        Returns the power angle, phi, from the voltage and current angles
-        """
-        return self.voltage_angle - self.current_angle
-
-    @phi.setter
-    def phi(self, value):
-        self.current_angle = self.voltage_angle - value
-
-    @property
-    def power_factor(self):
-        """
-        Returns the power factor with the chosen sign convention
-        """
-        return self.pf_sign_conversions[self.pf_sign_convention](self.phi)
-
-    def process_phi_change(self, x_coord, y_coord):
-        self.phi = np.arctan2(y_coord, x_coord)
+        self.phi.set(np.arctan2(y_coord, x_coord))
         apparent_power = min(1., (y_coord ** 2 + x_coord ** 2) ** 0.5)
-        self.current_rms = apparent_power / self.voltage_rms
+        self.current_rms.set(apparent_power / self.voltage_rms.get())
 
     def refresh(self):
         """
         Update the waveforms based on changes to voltage, current or power angle
         """
+        # Update derived state variables
+        self.current_angle.set(self.voltage_angle.get() - self.phi.get())
+        self.cos_phi.set(np.cos(self.phi.get()))
+        self.power_factor.set(self.pf_sign_conversions[self.pf_sign_convention.get()](self.cos_phi.get()))
+
+        apparent_power = self.voltage_rms.get()* self.current_rms.get()
+        active_power = apparent_power * np.cos(self.phi.get())
+        reactive_power = apparent_power * np.sin(self.phi.get())
+
+        self.apparent_power.set(apparent_power)
+        self.active_power.set(active_power)
+        self.reactive_power.set(reactive_power)
+
         # Convert voltage/current rms values to phasors
-        voltage_phasor = self.SQRT_TWO * self.voltage_rms * cmath.rect(1., self.voltage_angle)
-        current_phasor = self.SQRT_TWO * self.current_rms * cmath.rect(1., self.current_angle)
+        voltage_phasor = self.SQRT_TWO * self.voltage_rms.get() * cmath.rect(1., self.voltage_angle.get())
+        current_phasor = self.SQRT_TWO * self.current_rms.get() * cmath.rect(1., self.current_angle.get())
 
         # Build waveforms from phasors
         self.waveforms['voltage'] = np.real(voltage_phasor * self.waveforms['phase'])

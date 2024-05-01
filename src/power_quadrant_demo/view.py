@@ -16,44 +16,6 @@ from matplotlib.backends.backend_tkagg import (
 from matplotlib.figure import Figure
 
 
-class DisplayVariables:
-    _inst = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._inst:
-            return cls._inst
-        self = super().__new__(*args, **kwargs)
-        cls._inst = self
-
-        self.phi_str = tk.StringVar(name='PhiStr', value='NaN')
-        self.voltage_str = tk.StringVar(name='Vrms', value='NaN')
-        self.current_str = tk.StringVar(name='Irms', value='NaN')
-        self.cos_phi_str = tk.StringVar(name='cos(φ)', value='NaN')
-        self.apparent_power_str = tk.StringVar(name='S', value='NaN')
-        self.active_power_str = tk.StringVar(name='P', value='NaN')
-        self.reactive_power_str = tk.StringVar(name='Q', value='NaN')
-
-        return self
-
-    def __init__(self, model):
-        self.model = model
-
-    def refresh(self):
-        self.phi_str.set(f"{self.model.phi:z5.2f}")
-
-        self.voltage_str.set(f"{self.model.voltage_rms:z.2f}")
-        self.current_str.set(f"{self.model.current_rms:z.2f}")
-        self.cos_phi_str.set(f"{np.cos(self.model.phi):z.2f}")
-
-        apparent_power = self.model.voltage_rms * self.model.current_rms
-        active_power = apparent_power * np.cos(self.model.phi)
-        reactive_power = apparent_power * np.sin(self.model.phi)
-
-        self.apparent_power_str.set(f"{apparent_power:z.2f}")
-        self.active_power_str.set(f"{active_power:z.2f}")
-        self.reactive_power_str.set(f"{reactive_power:z.2f}")
-
-
 class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
     """
     An abstract base class for
@@ -63,7 +25,6 @@ class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
         super().__init__(parent)
 
         self.model = model
-        self.display_variables = DisplayVariables()
 
         self.log = logging.getLogger(self.__class__.__name__)
         self.log.setLevel(logging.DEBUG)
@@ -170,7 +131,7 @@ class QuadrantViewer(GraphBlock):
             self._button_held = True
 
             if event.inaxes:
-                self.model.process_phi_change(event.xdata, event.ydata)
+                self.model.process_power_phasor_change(event.xdata, event.ydata)
 
     def _button_release_handler(self, event):
         if event.button == MouseButton.LEFT:
@@ -178,15 +139,16 @@ class QuadrantViewer(GraphBlock):
 
     def _motion_notify_handler(self, event):
         if self._button_held and event.inaxes:
-            self.model.process_phi_change(event.xdata, event.ydata)
+            self.model.process_power_phasor_change(event.xdata, event.ydata)
 
     def refresh(self):
-        apparent_power = self.model.voltage_rms * self.model.current_rms
+        apparent_power = self.model.voltage_rms.get() * self.model.current_rms.get()
+        power_angle = self.model.phi.get()
 
         arc_radius = 0.1
         if apparent_power > arc_radius:
             # Plot angle arc
-            angle_deg = np.rad2deg(self.model.phi)
+            angle_deg = np.rad2deg(power_angle)
             theta1, theta2 = 0, angle_deg
             if angle_deg < 0:
                 theta1, theta2 = theta2, theta1
@@ -196,27 +158,27 @@ class QuadrantViewer(GraphBlock):
             self.ax.add_patch(e2)
 
         # Convert phi to rectangular and plot the vector
-        x = apparent_power * np.cos(self.model.phi)
-        y = apparent_power * np.sin(self.model.phi)
+        x = apparent_power * np.cos(power_angle)
+        y = apparent_power * np.sin(power_angle)
         self.transient_plot_objects.append(self.ax.plot([0, x], [0, y], '--', color='gray')[0])
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
 
         # Label with the value of phi of PF
-        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.display_variables.phi_str.get()}',
+        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.model.phi.str_var.get()}',
                                                         fontfamily='monospace'))
 
         horizontal_alignment = {
             0: 'left',
             1: 'center',
             2: 'right'
-        }[round(abs(self.model.phi), 1) // (np.pi / 3)]
+        }[round(abs(power_angle), 1) // (np.pi / 3)]
         vertical_alignment = {
             True: 'bottom',
             False: 'top'
-        }[self.model.phi > 0]
-        x = apparent_power * 1.05 * np.cos(self.model.phi)
-        y = apparent_power * 1.05 * np.sin(self.model.phi)
-        self.transient_plot_objects.append(self.ax.text(x, y, f'PF = {self.model.power_factor:z.2f}',
+        }[power_angle > 0]
+        x = apparent_power * 1.05 * np.cos(power_angle)
+        y = apparent_power * 1.05 * np.sin(power_angle)
+        self.transient_plot_objects.append(self.ax.text(x, y, f'PF = {self.model.power_factor.str_var.get()}',
                                                         fontfamily='monospace',
                                                         ha=horizontal_alignment, va=vertical_alignment))
 
@@ -248,7 +210,7 @@ class WaveformViewer(GraphBlock):
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
         self.canvas = self.create_canvas(fig)
 
-        peak_power = (self.SQRT_TWO * self.model.voltage_rms) * (self.SQRT_TWO * self.model.current_rms)
+        peak_power = (self.SQRT_TWO * self.model.voltage_rms.get()) * (self.SQRT_TWO * self.model.current_rms.get())
 
         self.upper_ax, self.middle_ax, self.lower_ax = fig.subplots(
             nrows=3, ncols=1, sharex=True, sharey=True,
@@ -281,7 +243,7 @@ class WaveformViewer(GraphBlock):
 
     def refresh(self):
         # Plot waveforms on the upper axis
-        power_sign = np.sign(np.cos(self.model.phi))
+        power_sign = np.sign(np.cos(self.model.phi.get()))
 
         # Plot waveforms on the upper axis
         voltage_plot = self.upper_ax.plot('time', 'voltage', data=self.model.waveforms,
@@ -319,8 +281,8 @@ class GraphOptionsPane(MyFrame):
         variables_frame.pack(
             side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        row_1 = [self.display_variables.voltage_str, self.display_variables.current_str, self.display_variables.cos_phi_str]
-        row_2 = [self.display_variables.apparent_power_str, self.display_variables.active_power_str, self.display_variables.reactive_power_str]
+        row_1 = [self.model.voltage_rms, self.model.current_rms, self.model.cos_phi]
+        row_2 = [self.model.apparent_power, self.model.active_power, self.model.reactive_power]
 
         column_count = max(len(row_1), len(row_2))
         for j in range(column_count):
@@ -332,11 +294,11 @@ class GraphOptionsPane(MyFrame):
                 if i >= len(row):
                     continue
 
-                ttk.Label(col_frame, text=f'{row[j]._name}', style='Text.TLabel').grid(
+                ttk.Label(col_frame, text=f'{row[j].name}', style='Text.TLabel').grid(
                     row=i, column=0, sticky=tk.W, padx=(5, 0), pady=5)
-                ttk.Label(col_frame, text=f'=', style='Text.TLabel').grid(
+                ttk.Label(col_frame, text='=', style='Text.TLabel').grid(
                     row=i, column=1, sticky=tk.W, padx=0, pady=5)
-                ttk.Label(col_frame, textvariable=row[j], style='Text.TLabel', width=4, anchor='e').grid(
+                ttk.Label(col_frame, textvariable=row[j].str_var, style='Text.TLabel', width=4, anchor='e').grid(
                     row=i, column=2, sticky=tk.W, padx=(0, 5), pady=5)
 
         pf_convention_frame = ttk.Frame(self)
@@ -358,7 +320,6 @@ class GraphOptionsPane(MyFrame):
 class View:
     def __init__(self, root, model):
         self.root = root
-        self.model = model
 
         self.components: list[MyFrame] = []
 
@@ -368,15 +329,15 @@ class View:
         left_block = ttk.Frame(self.frame)
         left_block.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        component = QuadrantViewer(left_block, self.model)
+        component = QuadrantViewer(left_block, model)
         component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.components.append(component)
 
-        component = GraphOptionsPane(left_block, self.model)
+        component = GraphOptionsPane(left_block, model)
         component.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.components.append(component)
 
-        component = WaveformViewer(self.frame, self.model)
+        component = WaveformViewer(self.frame, model)
         component.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.components.append(component)
 
@@ -385,7 +346,5 @@ class View:
             component.setup()
 
     def refresh(self):
-        self.update_display_variables()
-
         for component in self.components:
             component._refresh()
