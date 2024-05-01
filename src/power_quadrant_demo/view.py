@@ -18,21 +18,28 @@ from matplotlib.figure import Figure
 
 class MyFrame(ttk.Frame, metaclass=abc.ABCMeta):
     """
-    An abstract base class for
+    An abstract base class for custom
     """
 
     def __init__(self, parent, model):
+        self.log = logging.getLogger(self.__class__.__name__)
+        self.log.debug('Running __init__')
+
         super().__init__(parent)
 
-        self.model = model
+        style = ttk.Style()
+        style.configure('Header.TLabel', font=('Helvetica', 14))
+        style.configure('SubHeader.TLabel', font=('Helvetica', 12))
+        style.configure('Text.TLabel', font=('Helvetica', 12))
+        style.configure('Text.TRadiobutton', font=('Helvetica', 12))
 
-        self.log = logging.getLogger(self.__class__.__name__)
-        self.log.setLevel(logging.DEBUG)
+        self.model = model
 
     def setup(self):
         """
         An optional method for running additional setup code after __init__
         """
+        self.log.debug('Running setup')
 
     def _refresh(self):
         """
@@ -75,9 +82,6 @@ class GraphBlock(MyFrame, metaclass=abc.ABCMeta):
         return canvas
 
     @abc.abstractmethod
-    def setup(self): ...
-
-    @abc.abstractmethod
     def refresh(self): ...
 
 
@@ -93,10 +97,8 @@ class QuadrantViewer(GraphBlock):
         self.ax = None
         self._button_held = False
 
-        # self.model.state_count.trace_add('write', lambda *_: self.phi_str.set(f"{self.model.phi:z5.2f}"))
-
     def setup(self):
-        self.log.debug('Setting up QuadrantViewer')
+        super().setup()
 
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
         self.canvas = self.create_canvas(fig)
@@ -143,7 +145,7 @@ class QuadrantViewer(GraphBlock):
 
     def refresh(self):
         apparent_power = self.model.voltage_rms.get() * self.model.current_rms.get()
-        power_angle = self.model.phi.get()
+        power_angle = self.model.power_angle.get()
 
         arc_radius = 0.1
         if apparent_power > arc_radius:
@@ -157,14 +159,14 @@ class QuadrantViewer(GraphBlock):
             self.transient_plot_objects.append(e2)
             self.ax.add_patch(e2)
 
-        # Convert phi to rectangular and plot the vector
+        # Convert power_angle to rectangular and plot the vector
         x = apparent_power * np.cos(power_angle)
         y = apparent_power * np.sin(power_angle)
         self.transient_plot_objects.append(self.ax.plot([0, x], [0, y], '--', color='gray')[0])
         self.transient_plot_objects.append(self.ax.plot(x, y, 'r.', markersize=10)[0])
 
-        # Label with the value of phi of PF
-        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.model.phi.str_var.get()}',
+        # Label with the value of power_angle of PF
+        self.transient_plot_objects.append(self.ax.text(0.02, 0.02, f'φ = {self.model.power_angle.str_var.get()}',
                                                         fontfamily='monospace'))
 
         horizontal_alignment = {
@@ -185,7 +187,7 @@ class QuadrantViewer(GraphBlock):
 
 class WaveformViewer(GraphBlock):
     """
-    The section of the GUI which displays the
+    The section of the GUI which displays the voltage, current and power waveforms
     """
     DIMENSIONS = 6, 9
     MIN_TIME, MAX_TIME = -10, 30
@@ -205,7 +207,7 @@ class WaveformViewer(GraphBlock):
         self.phase_array = np.exp(1j * self.OMEGA * self.time_array)
 
     def setup(self):
-        self.log.debug('Setting up WaveformViewer')
+        super().setup()
 
         fig = Figure(figsize=self.DIMENSIONS, dpi=100)
         self.canvas = self.create_canvas(fig)
@@ -243,7 +245,7 @@ class WaveformViewer(GraphBlock):
 
     def refresh(self):
         # Plot waveforms on the upper axis
-        power_sign = np.sign(np.cos(self.model.phi.get()))
+        power_sign = np.sign(np.cos(self.model.power_angle.get()))
 
         # Plot waveforms on the upper axis
         voltage_plot = self.upper_ax.plot('time', 'voltage', data=self.model.waveforms,
@@ -274,6 +276,9 @@ class WaveformViewer(GraphBlock):
 
 
 class GraphOptionsPane(MyFrame):
+    """
+    The section of the GUI which shows some values and provides some options
+    """
     def __init__(self, parent, model):
         super().__init__(parent, model)
 
@@ -318,7 +323,13 @@ class GraphOptionsPane(MyFrame):
 
 
 class View:
+    """
+    The view component of the MVC gui model
+    """
     def __init__(self, root, model):
+        self.log = logging.getLogger(self.__class__.__name__)
+        self.log.debug('Running __init__')
+
         self.root = root
 
         self.components: list[MyFrame] = []
@@ -342,9 +353,15 @@ class View:
         self.components.append(component)
 
     def setup(self):
+        """
+        Runs the setup method of all gui components contained by the view
+        """
         for component in self.components:
             component.setup()
 
     def refresh(self):
+        """
+        Runs the refresh method of all gui components contained by the view
+        """
         for component in self.components:
             component._refresh()
