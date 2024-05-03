@@ -12,3 +12,4 @@ IEEE 1547 and IEC 61850-7-420 for distributed energy resources (DER).
  - https://yasirarafin.com/can-synchronous-generator-generates-reactive-power/
  - https://www.electricalpereview.com/leading-lagging-cheat-sheet/
  - https://www2.clarku.edu/faculty/djoyce/trig/identities.html
+ - https://martinfowler.com/eaaDev/uiArchs.html

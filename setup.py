@@ -15,6 +15,7 @@ setup(
     packages=['power_quadrant_demo'],
     install_requires=[
         'numpy',
+        'pandas',
         'matplotlib'
     ],
     package_data={
