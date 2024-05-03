@@ -77,9 +77,6 @@ class GraphBlock(MyFrame, metaclass=abc.ABCMeta):
         self.canvas = None
         self.transient_plot_objects = []
 
-    def setup(self):
-        super().setup()
-
     def create_canvas(self, fig: Figure) -> FigureCanvasTkAgg:
         """
         From a given matplotlib Figure, create and return a canvas which has been added to the figure
